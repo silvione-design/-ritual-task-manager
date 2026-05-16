@@ -230,13 +230,20 @@ let loading=false;
 const DSET=['','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'];
 
 // ── API ──
-function api(fn, ...args) {
-  return new Promise((resolve, reject) => {
-    google.script.run
-      .withSuccessHandler(r => resolve(r))
-      .withFailureHandler(e => reject(e))
-      [fn](...args);
+async function apiGet() {
+  const res = await fetch('/api/data');
+  if (!res.ok) throw new Error('Errore API');
+  return res.json();
+}
+
+async function apiPost(action, body) {
+  const res = await fetch('/api/action?action='+action, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   });
+  if (!res.ok) throw new Error('Errore API');
+  return res.json();
 }
 
 // ── LOGIN ──
@@ -247,8 +254,8 @@ async function doLogin() {
   const pwd  = document.getElementById('login-pwd').value;
   const err  = document.getElementById('login-err');
   try {
-    const result = await api('apiLogin', user, pwd);
-    if (result === 'ok') {
+    const result = await apiPost('login', { user, pwd });
+    if (result.ok) {
       currentUser = user;
       err.style.display = 'none';
       document.getElementById('login-wrap').classList.add('hidden');
@@ -277,8 +284,7 @@ function doLogout() {
 async function loadAll() {
   showLoading();
   try {
-    const raw = await api('apiGetAll');
-    const data = JSON.parse(raw);
+    const data = await apiGet();
     tasks   = data.tasks.map(t => ({...t, ultimoInvio: t.ultimoInvio ? new Date(t.ultimoInvio) : null}));
     people  = data.people;
     config  = data.config;
@@ -579,7 +585,7 @@ async function saveTask() {
   if(!task.nome)return alert('Inserisci il nome della procedura.');
   closeModal('modal-task');
   try {
-    await api('apiSaveTask', JSON.stringify(task));
+    await apiPost('saveTask', task);
     await loadAll();
     renderTab(currentTab);
     showToast('Task salvato ✓','ok');
@@ -589,7 +595,7 @@ async function saveTask() {
 async function deleteTask(id) {
   if(!confirm('Eliminare questo task?'))return;
   try {
-    await api('apiDeleteTask', id);
+    await apiPost('deleteTask', { id });
     await loadAll();
     renderTasks();
     updateNavBadge();
@@ -615,7 +621,7 @@ async function savePerson() {
   if(!person.email)return alert('Inserisci l\'email — è necessaria per i reminder automatici.');
   closeModal('modal-person');
   try {
-    await api('apiSavePerson', JSON.stringify(person));
+    await apiPost('savePerson', person);
     await loadAll();
     renderPeople();
     showToast('Persona salvata ✓','ok');
@@ -625,7 +631,7 @@ async function savePerson() {
 async function deletePerson(id) {
   if(!confirm('Eliminare questa persona?'))return;
   try {
-    await api('apiDeletePerson', id);
+    await apiPost('deletePerson', { id });
     await loadAll();
     renderPeople();
     showToast('Persona eliminata','ok');
