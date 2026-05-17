@@ -1,40 +1,37 @@
-import { google } from 'googleapis';
+const { google } = require('googleapis');
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
-async function getAuth() {
+async function getSheets() {
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GOOGLE_CLIENT_EMAIL,
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      private_key: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
-  return auth;
+  return google.sheets({ version: 'v4', auth });
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
-    const auth = await getAuth();
-    const sheets = google.sheets({ version: 'v4', auth });
+    const sheets = await getSheets();
 
-    // Read all sheets
     const [taskRes, peopleRes, configRes] = await Promise.all([
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'Task!A:M' }),
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'Persone!A:D' }),
       sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'Config!A:B' }),
     ]);
 
-    const taskRows    = taskRes.data.values || [];
-    const peopleRows  = peopleRes.data.values || [];
-    const configRows  = configRes.data.values || [];
+    const taskRows   = taskRes.data.values   || [];
+    const peopleRows = peopleRes.data.values  || [];
+    const configRows = configRes.data.values  || [];
 
-    // Parse tasks (skip header row)
     const tasks = taskRows.slice(1).filter(r => r[0]).map(r => ({
       id:             r[0]  || '',
       nome:           r[1]  || '',
@@ -47,11 +44,10 @@ export default async function handler(req, res) {
       primaryId:      r[8]  || '',
       backupId:       r[9]  || '',
       note:           r[10] || '',
-      attivo:         r[11] === 'TRUE' || r[11] === true || r[11] === '1',
+      attivo:         r[11] === 'TRUE' || r[11] === true,
       ultimoInvio:    r[12] || null,
     }));
 
-    // Parse people (skip header row)
     const people = peopleRows.slice(1).filter(r => r[0]).map(r => ({
       id:       r[0] || '',
       nome:     r[1] || '',
@@ -59,7 +55,6 @@ export default async function handler(req, res) {
       email:    r[3] || '',
     }));
 
-    // Parse config (skip header row)
     const config = {};
     configRows.slice(1).forEach(r => { if (r[0]) config[r[0]] = r[1]; });
 
@@ -68,4 +63,4 @@ export default async function handler(req, res) {
     console.error(err);
     res.status(500).json({ error: err.message });
   }
-}
+};
