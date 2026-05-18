@@ -3,10 +3,16 @@ const { google } = require('googleapis');
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
 async function getSheets() {
+  let privateKey = process.env.GOOGLE_PRIVATE_KEY || '';
+  // Handle both escaped and literal newlines
+  privateKey = privateKey.replace(/\\n/g, '\n');
+  if (!privateKey.includes('\n')) {
+    privateKey = privateKey.split(' ').join('\n');
+  }
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GOOGLE_CLIENT_EMAIL,
-      private_key: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+      private_key: privateKey,
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
