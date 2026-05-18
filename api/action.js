@@ -1,28 +1,9 @@
-const { google } = require('googleapis');
+const { Redis } = require('@upstash/redis');
 
-const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-
-async function getSheets() {
-  let privateKey = process.env.GOOGLE_PRIVATE_KEY || '';
-  // Handle both escaped and literal newlines
-  privateKey = privateKey.replace(/\\n/g, '\n');
-  if (!privateKey.includes('\n')) {
-    privateKey = privateKey.split(' ').join('\n');
-  }
-  const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: process.env.GOOGLE_CLIENT_EMAIL,
-      private_key: privateKey,
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-  return google.sheets({ version: 'v4', auth });
-}
-
-async function readSheet(sheets, range) {
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range });
-  return res.data.values || [];
-}
+const redis = new Redis({
+  url: process.env.STORAGE_KV_REST_API_URL || process.env.KV_REST_API_URL,
+  token: process.env.STORAGE_KV_REST_API_TOKEN || process.env.KV_REST_API_TOKEN,
+});
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -33,118 +14,61 @@ module.exports = async function handler(req, res) {
   const action = req.query.action;
 
   try {
-    const sheets = await getSheets();
-
     // LOGIN
     if (action === 'login') {
       const { user, pwd } = req.body;
-      const rows = await readSheet(sheets, 'Config!A:B');
-      const cfg = {};
-      rows.slice(1).forEach(r => { if (r[0]) cfg[r[0]] = r[1]; });
-      if (user === 'silvio' && pwd === cfg['password_silvio']) return res.json({ ok: true });
-      if (user === 'catia'  && pwd === cfg['password_catia'])  return res.json({ ok: true });
+      const config = await redis.get('config') || {};
+      if (user === 'silvio' && pwd === config.password_silvio) return res.json({ ok: true });
+      if (user === 'catia'  && pwd === config.password_catia)  return res.json({ ok: true });
       return res.json({ ok: false });
     }
 
     // SAVE TASK
     if (action === 'saveTask') {
       const task = req.body;
-      const rows = await readSheet(sheets, 'Task!A:A');
-      const row = [
-        task.id, task.nome, task.categoria, task.freqType,
-        task.freqValue || '', task.freqGiornoMese || '', task.freqGiornoSett || '',
-        task.oraInvio || '09:00', task.primaryId || '', task.backupId || '',
-        task.note || '', task.attivo ? 'TRUE' : 'FALSE', task.ultimoInvio || ''
-      ];
-      const idx = rows.findIndex(r => r[0] === task.id);
-      if (idx >= 0) {
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: SHEET_ID,
-          range: `Task!A${idx + 1}:M${idx + 1}`,
-          valueInputOption: 'RAW',
-          requestBody: { values: [row] },
-        });
-      } else {
-        await sheets.spreadsheets.values.append({
-          spreadsheetId: SHEET_ID, range: 'Task!A:M',
-          valueInputOption: 'RAW', requestBody: { values: [row] },
-        });
-      }
+      let tasks = await redis.get('tasks') || [];
+      const idx = tasks.findIndex(t => t.id === task.id);
+      if (idx >= 0) tasks[idx] = task;
+      else tasks.push(task);
+      await redis.set('tasks', tasks);
       return res.json({ result: 'ok' });
     }
 
     // DELETE TASK
     if (action === 'deleteTask') {
       const { id } = req.body;
-      const rows = await readSheet(sheets, 'Task!A:A');
-      const idx = rows.findIndex(r => r[0] === id);
-      if (idx >= 0) {
-        const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
-        const sheet = meta.data.sheets.find(s => s.properties.title === 'Task');
-        await sheets.spreadsheets.batchUpdate({
-          spreadsheetId: SHEET_ID,
-          requestBody: { requests: [{ deleteDimension: { range: {
-            sheetId: sheet.properties.sheetId, dimension: 'ROWS',
-            startIndex: idx, endIndex: idx + 1
-          }}}]}
-        });
-      }
+      let tasks = await redis.get('tasks') || [];
+      tasks = tasks.filter(t => t.id !== id);
+      await redis.set('tasks', tasks);
       return res.json({ result: 'ok' });
     }
 
     // SAVE PERSON
     if (action === 'savePerson') {
       const person = req.body;
-      const rows = await readSheet(sheets, 'Persone!A:A');
-      const row = [person.id, person.nome, person.whatsapp || '', person.email || ''];
-      const idx = rows.findIndex(r => r[0] === person.id);
-      if (idx >= 0) {
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: SHEET_ID,
-          range: `Persone!A${idx + 1}:D${idx + 1}`,
-          valueInputOption: 'RAW', requestBody: { values: [row] },
-        });
-      } else {
-        await sheets.spreadsheets.values.append({
-          spreadsheetId: SHEET_ID, range: 'Persone!A:D',
-          valueInputOption: 'RAW', requestBody: { values: [row] },
-        });
-      }
+      let people = await redis.get('people') || [];
+      const idx = people.findIndex(p => p.id === person.id);
+      if (idx >= 0) people[idx] = person;
+      else people.push(person);
+      await redis.set('people', people);
       return res.json({ result: 'ok' });
     }
 
     // DELETE PERSON
     if (action === 'deletePerson') {
       const { id } = req.body;
-      const rows = await readSheet(sheets, 'Persone!A:A');
-      const idx = rows.findIndex(r => r[0] === id);
-      if (idx >= 0) {
-        const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
-        const sheet = meta.data.sheets.find(s => s.properties.title === 'Persone');
-        await sheets.spreadsheets.batchUpdate({
-          spreadsheetId: SHEET_ID,
-          requestBody: { requests: [{ deleteDimension: { range: {
-            sheetId: sheet.properties.sheetId, dimension: 'ROWS',
-            startIndex: idx, endIndex: idx + 1
-          }}}]}
-        });
-      }
+      let people = await redis.get('people') || [];
+      people = people.filter(p => p.id !== id);
+      await redis.set('people', people);
       return res.json({ result: 'ok' });
     }
 
     // MARK SENT
     if (action === 'markSent') {
       const { id } = req.body;
-      const rows = await readSheet(sheets, 'Task!A:A');
-      const idx = rows.findIndex(r => r[0] === id);
-      if (idx >= 0) {
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: SHEET_ID,
-          range: `Task!M${idx + 1}`,
-          valueInputOption: 'RAW',
-          requestBody: { values: [[new Date().toISOString()]] },
-        });
-      }
+      let tasks = await redis.get('tasks') || [];
+      tasks = tasks.map(t => t.id === id ? { ...t, ultimoInvio: new Date().toISOString() } : t);
+      await redis.set('tasks', tasks);
       return res.json({ result: 'ok' });
     }
 
